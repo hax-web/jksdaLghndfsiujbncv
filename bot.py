@@ -1,27 +1,29 @@
 import os
 import random
+import re
 import sqlite3
 import asyncio
 from datetime import datetime
- 
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
- 
+import requests
+
 # ---------------- 진단: PyNaCl / 음성 지원 여부 로그 출력 ----------------
 try:
     import nacl
     print(f"[진단] nacl 패키지 로드 성공, 버전: {nacl.__version__}")
 except Exception as e:
     print(f"[진단] nacl 패키지 로드 실패: {type(e).__name__}: {e}")
- 
+
 try:
     import nacl.secret
     import nacl.utils
     print("[진단] nacl.secret 서브모듈(실제 암호화 기능) 로드 성공")
 except Exception as e:
     print(f"[진단] nacl.secret 서브모듈 로드 실패: {type(e).__name__}: {e}")
- 
+
 try:
     import discord.voice_client as _vc_mod
     flag = getattr(_vc_mod, "has_nacl", None)
@@ -30,18 +32,18 @@ try:
     print(f"[진단] discord.py 내부 음성 지원 플래그: {flag}")
 except Exception as e:
     print(f"[진단] discord.py voice_client 모듈 확인 실패: {type(e).__name__}: {e}")
- 
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = "!"
 DB_PATH = "bot.db"
- 
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.voice_states = True
- 
+
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
- 
+
 db = sqlite3.connect(DB_PATH)
 db.execute("""CREATE TABLE IF NOT EXISTS levels (
     guild_id INTEGER,
@@ -70,9 +72,9 @@ db.execute("""CREATE TABLE IF NOT EXISTS schedules (
     last_sent_date TEXT
 )""")
 db.commit()
- 
+
 xp_cooldown = {}
- 
+
 def get_settings(guild_id):
     row = db.execute("SELECT * FROM settings WHERE guild_id=?", (guild_id,)).fetchone()
     if not row:
@@ -80,32 +82,32 @@ def get_settings(guild_id):
         db.commit()
         return get_settings(guild_id)
     return row
- 
+
 def set_setting(guild_id, column, value):
     get_settings(guild_id)
     db.execute(f"UPDATE settings SET {column}=? WHERE guild_id=?", (value, guild_id))
     db.commit()
- 
+
 def is_admin(interaction):
     return interaction.user.guild_permissions.manage_guild
- 
+
 async def admin_only(interaction):
     if not is_admin(interaction):
         await interaction.response.send_message("관리자 권한이 필요합니다.", ephemeral=True)
         return False
     return True
- 
+
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     timed_message_loop.start()
     print(f"로그인 완료: {bot.user} ({bot.user.id})")
- 
+
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
         return
- 
+
     now = datetime.now().timestamp()
     key = (message.guild.id, message.author.id)
     if now - xp_cooldown.get(key, 0) >= 60:
@@ -114,12 +116,12 @@ async def on_message(message):
             "SELECT xp, level FROM levels WHERE guild_id=? AND user_id=?",
             (message.guild.id, message.author.id)
         ).fetchone()
- 
+
         if row:
             xp, level = row
         else:
             xp, level = 0, 1
- 
+
         xp += random.randint(10, 20)
         needed = level * 100
         if xp >= needed:
@@ -130,17 +132,17 @@ async def on_message(message):
             channel = message.guild.get_channel(channel_id) if channel_id else None
             if channel:
                 await channel.send(f"🎉 {message.author.mention} 레벨 **{level}** 달성!")
- 
+
         db.execute(
             "INSERT OR REPLACE INTO levels(guild_id,user_id,xp,level) VALUES(?,?,?,?)",
             (message.guild.id, message.author.id, xp, level)
         )
         db.commit()
- 
+
     await bot.process_commands(message)
- 
+
 # ---------------- 미니게임 ----------------
- 
+
 @bot.tree.command(name="홀짝", description="1~10의 숫자가 홀수인지 짝수인지 맞힙니다.")
 @app_commands.describe(선택="홀 또는 짝")
 async def odd_even(interaction: discord.Interaction, 선택: str):
@@ -151,7 +153,7 @@ async def odd_even(interaction: discord.Interaction, 선택: str):
     answer = "홀" if number % 2 else "짝"
     result = "정답!" if 선택 == answer else "틀렸습니다!"
     await interaction.response.send_message(f"🎲 숫자: **{number}** → **{answer}**\n{result}")
- 
+
 @bot.tree.command(name="가위바위보", description="봇과 가위바위보를 합니다.")
 @app_commands.describe(선택="가위, 바위, 보")
 async def rps(interaction: discord.Interaction, 선택: str):
@@ -167,11 +169,11 @@ async def rps(interaction: discord.Interaction, 선택: str):
     else:
         result = "패배!"
     await interaction.response.send_message(f"✊ 선택: {선택}\n🤖 봇: {bot_choice}\n**{result}**")
- 
+
 @bot.tree.command(name="주사위", description="주사위를 굴립니다.")
 async def dice(interaction: discord.Interaction):
     await interaction.response.send_message(f"🎲 **{random.randint(1, 6)}**")
- 
+
 @bot.tree.command(name="숫자맞히기", description="1~10 중 봇이 고른 숫자를 맞힙니다.")
 @app_commands.describe(숫자="1~10 사이 숫자")
 async def number_guess(interaction: discord.Interaction, 숫자: int):
@@ -182,9 +184,9 @@ async def number_guess(interaction: discord.Interaction, 숫자: int):
     await interaction.response.send_message(
         f"🎯 정답은 **{answer}**\n" + ("정답입니다!" if 숫자 == answer else "아쉽네요!")
     )
- 
+
 # ---------------- 관리 ----------------
- 
+
 @bot.tree.command(name="청소", description="현재 채널의 메시지를 삭제합니다.")
 @app_commands.describe(개수="삭제할 메시지 수")
 async def clear(interaction: discord.Interaction, 개수: app_commands.Range[int, 1, 100]):
@@ -193,7 +195,7 @@ async def clear(interaction: discord.Interaction, 개수: app_commands.Range[int
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=개수)
     await interaction.followup.send(f"🧹 {len(deleted)}개의 메시지를 삭제했습니다.", ephemeral=True)
- 
+
 @bot.tree.command(name="추방", description="멤버를 서버에서 추방합니다.")
 @app_commands.describe(멤버="추방할 멤버", 사유="사유")
 async def kick(interaction: discord.Interaction, 멤버: discord.Member, 사유: str = "사유 없음"):
@@ -201,7 +203,7 @@ async def kick(interaction: discord.Interaction, 멤버: discord.Member, 사유:
         return
     await 멤버.kick(reason=사유)
     await interaction.response.send_message(f"👢 {멤버.mention} 추방 완료.")
- 
+
 @bot.tree.command(name="차단", description="멤버를 서버에서 차단합니다.")
 @app_commands.describe(멤버="차단할 멤버", 사유="사유")
 async def ban(interaction: discord.Interaction, 멤버: discord.Member, 사유: str = "사유 없음"):
@@ -209,7 +211,7 @@ async def ban(interaction: discord.Interaction, 멤버: discord.Member, 사유: 
         return
     await 멤버.ban(reason=사유)
     await interaction.response.send_message(f"🔨 {멤버} 차단 완료.")
- 
+
 @bot.tree.command(name="공지", description="현재 채널에 공지를 보냅니다.")
 @app_commands.describe(내용="공지 내용")
 async def announce(interaction: discord.Interaction, 내용: str):
@@ -217,9 +219,9 @@ async def announce(interaction: discord.Interaction, 내용: str):
         return
     embed = discord.Embed(title="📢 공지", description=내용, color=discord.Color.blurple())
     await interaction.response.send_message(embed=embed)
- 
+
 # ---------------- 레벨 ----------------
- 
+
 @bot.tree.command(name="레벨", description="내 레벨을 확인합니다.")
 @app_commands.describe(멤버="확인할 멤버")
 async def level(interaction: discord.Interaction, 멤버: discord.Member = None):
@@ -230,7 +232,7 @@ async def level(interaction: discord.Interaction, 멤버: discord.Member = None)
     ).fetchone()
     xp, lvl = row if row else (0, 1)
     await interaction.response.send_message(f"⭐ {member.mention} | 레벨 **{lvl}** | XP **{xp}/{lvl*100}**")
- 
+
 @bot.tree.command(name="랭킹", description="서버 레벨 랭킹을 확인합니다.")
 async def ranking(interaction: discord.Interaction):
     rows = db.execute(
@@ -246,7 +248,7 @@ async def ranking(interaction: discord.Interaction):
         name = member.display_name if member else f"사용자 {uid}"
         lines.append(f"**{i}.** {name} — Lv.{lvl} ({xp} XP)")
     await interaction.response.send_message("🏆 **레벨 랭킹**\n" + "\n".join(lines))
- 
+
 @bot.tree.command(name="레벨채널", description="레벨업 알림 채널을 설정합니다.")
 @app_commands.describe(채널="알림 채널")
 async def level_channel(interaction: discord.Interaction, 채널: discord.TextChannel):
@@ -254,24 +256,24 @@ async def level_channel(interaction: discord.Interaction, 채널: discord.TextCh
         return
     set_setting(interaction.guild.id, "level_channel", 채널.id)
     await interaction.response.send_message(f"⭐ 레벨업 채널을 {채널.mention}으로 설정했습니다.")
- 
+
 # ---------------- 티켓 ----------------
- 
+
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
- 
+
     @discord.ui.button(label="🎫 티켓 생성", style=discord.ButtonStyle.primary, custom_id="ticket_create")
     async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
         settings = get_settings(guild.id)
         category = guild.get_channel(settings[2]) if settings[2] else None
- 
+
         existing = discord.utils.get(guild.text_channels, name=f"ticket-{interaction.user.id}")
         if existing:
             await interaction.response.send_message(f"이미 티켓이 있습니다: {existing.mention}", ephemeral=True)
             return
- 
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
@@ -280,7 +282,7 @@ class TicketView(discord.ui.View):
         for role in guild.roles:
             if role.permissions.manage_guild:
                 overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
- 
+
         channel = await guild.create_text_channel(
             f"ticket-{interaction.user.id}",
             category=category,
@@ -292,11 +294,11 @@ class TicketView(discord.ui.View):
             view=CloseTicketView()
         )
         await interaction.response.send_message(f"🎫 티켓 생성: {channel.mention}", ephemeral=True)
- 
+
 class CloseTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
- 
+
     @discord.ui.button(label="🔒 티켓 닫기", style=discord.ButtonStyle.danger, custom_id="ticket_close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not (interaction.user.guild_permissions.manage_guild or
@@ -306,7 +308,7 @@ class CloseTicketView(discord.ui.View):
         await interaction.response.send_message("🔒 티켓을 닫습니다.")
         await asyncio.sleep(2)
         await interaction.channel.delete(reason="티켓 종료")
- 
+
 @bot.tree.command(name="티켓설정", description="티켓 생성 패널을 현재 채널에 설치합니다.")
 async def ticket_setup(interaction: discord.Interaction):
     if not await admin_only(interaction):
@@ -318,7 +320,7 @@ async def ticket_setup(interaction: discord.Interaction):
     )
     await interaction.channel.send(embed=embed, view=TicketView())
     await interaction.response.send_message("티켓 패널을 설치했습니다.", ephemeral=True)
- 
+
 @bot.tree.command(name="티켓카테고리", description="티켓이 생성될 카테고리를 설정합니다.")
 @app_commands.describe(카테고리="티켓 카테고리")
 async def ticket_category(interaction: discord.Interaction, 카테고리: discord.CategoryChannel):
@@ -326,9 +328,9 @@ async def ticket_category(interaction: discord.Interaction, 카테고리: discor
         return
     set_setting(interaction.guild.id, "ticket_category", 카테고리.id)
     await interaction.response.send_message(f"🎫 티켓 카테고리: **{카테고리.name}**")
- 
+
 # ---------------- 시간 채팅 ----------------
- 
+
 @bot.tree.command(name="반복채팅추가", description="정해진 시간마다 특정 채널에 자동 메시지를 보내도록 추가합니다.")
 @app_commands.describe(채널="메시지를 보낼 채널", 시="0~23", 분="0~59", 내용="자동으로 보낼 메시지")
 async def schedule_add(interaction: discord.Interaction, 채널: discord.TextChannel, 시: int, 분: int, 내용: str):
@@ -343,7 +345,7 @@ async def schedule_add(interaction: discord.Interaction, 채널: discord.TextCha
     )
     db.commit()
     await interaction.response.send_message(f"⏰ 매일 {시:02d}:{분:02d}에 {채널.mention}으로 메시지를 보냅니다.\n> {내용}")
- 
+
 @bot.tree.command(name="반복채팅목록", description="등록된 자동 메시지 목록을 확인합니다.")
 async def schedule_list(interaction: discord.Interaction):
     rows = db.execute(
@@ -359,7 +361,7 @@ async def schedule_list(interaction: discord.Interaction):
         channel_text = channel.mention if channel else f"(알 수 없는 채널: {channel_id})"
         lines.append(f"`#{id_}` {hour:02d}:{minute:02d} → {channel_text}\n> {message}")
     await interaction.response.send_message("⏰ **등록된 자동 메시지**\n" + "\n".join(lines))
- 
+
 @bot.tree.command(name="반복채팅삭제", description="등록된 자동 메시지를 삭제합니다. (/반복채팅목록에서 번호 확인)")
 @app_commands.describe(번호="삭제할 항목 번호 (/반복채팅목록에서 #뒤의 숫자)")
 async def schedule_delete(interaction: discord.Interaction, 번호: int):
@@ -374,7 +376,7 @@ async def schedule_delete(interaction: discord.Interaction, 번호: int):
     db.execute("DELETE FROM schedules WHERE id=?", (번호,))
     db.commit()
     await interaction.response.send_message(f"🗑️ `#{번호}` 항목을 삭제했습니다.")
- 
+
 @tasks.loop(minutes=1)
 async def timed_message_loop():
     now = datetime.now()
@@ -396,36 +398,40 @@ async def timed_message_loop():
                 db.commit()
             except discord.HTTPException:
                 pass
- 
-# ---------------- 음악 ----------------
-# 음악 기능은 yt-dlp + FFmpeg를 사용합니다.
-# Railway에서는 FFmpeg가 제공되는 환경인지 확인하고, 필요하면 Nixpacks 설정을 추가하세요.
- 
+
+# ---------------- 음악 (Piped 기반, 유튜브 봇 차단 우회) ----------------
+# 클라우드 서버 IP에서는 유튜브가 직접 스크래핑을 차단하는 경우가 많아,
+# 검색/스트림 추출을 Piped(계정 불필요한 유튜브 프록시)를 통해 처리합니다.
+
 music_queues = {}
 music_starters = {}  # guild_id -> 재생을 시작한 사람의 user_id
- 
-YDL_OPTS = {
-    "format": "bestaudio/best",
-    "noplaylist": True,
-    "quiet": True,
-    "no_warnings": True,
-    "default_search": "ytsearch",
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "web"],
-        }
-    },
-    "geo_bypass": True,
-    "socket_timeout": 10,
-}
- 
+
+PIPED_INSTANCES = [
+    "https://pipedapi.leptons.xyz",
+    "https://pipedapi.nosebs.ru",
+    "https://pipedapi-libre.kavin.rocks",
+    "https://piped-api.privacy.com.de",
+    "https://pipedapi.drgns.space",
+    "https://pipedapi.owo.si",
+    "https://pipedapi.ducks.party",
+    "https://piped-api.codespace.cz",
+    "https://pipedapi.reallyaweso.me",
+    "https://api.piped.private.coffee",
+    "https://pipedapi.darkness.services",
+    "https://pipedapi.orangenet.cc",
+    "https://pipedapi.kavin.rocks",
+    "https://api.piped.yt",
+    "https://piped-api.privacyredirect.com",
+    "https://pipedapi.adminforge.de",
+]
+
 FFMPEG_BEFORE_OPTIONS = (
     "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 )
- 
+
 def get_queue(guild_id):
     return music_queues.setdefault(guild_id, [])
- 
+
 async def ensure_voice(interaction):
     """interaction.response.defer()가 이미 호출된 뒤에 불러야 함 (followup 사용)"""
     if not interaction.user.voice or not interaction.user.voice.channel:
@@ -445,23 +451,63 @@ async def ensure_voice(interaction):
     elif not vc:
         vc = await channel.connect()
     return vc
- 
+
+def extract_video_id(text: str):
+    match = re.search(r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{11})", text)
+    if match:
+        return match.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", text):
+        return text
+    return None
+
+def piped_search_video_id(query: str):
+    for base in PIPED_INSTANCES:
+        try:
+            resp = requests.get(
+                f"{base}/search", params={"q": query, "filter": "videos"}, timeout=6
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            for it in items:
+                url_path = it.get("url", "")
+                vid = extract_video_id(url_path)
+                if vid:
+                    return vid
+        except Exception as e:
+            print(f"[음악검색] {base} 실패: {repr(e)}")
+            continue
+    return None
+
+def piped_get_track_info(video_id: str):
+    for base in PIPED_INSTANCES:
+        try:
+            resp = requests.get(f"{base}/streams/{video_id}", timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            audio_streams = data.get("audioStreams", [])
+            if audio_streams:
+                best = max(audio_streams, key=lambda s: s.get("bitrate", 0))
+                return {
+                    "title": data.get("title", "알 수 없는 곡"),
+                    "url": best["url"],
+                    "http_headers": {},
+                }
+        except Exception as e:
+            print(f"[음악스트림] {base} 실패: {repr(e)}")
+            continue
+    return None
+
 def search_track(query: str) -> dict:
-    """검색어면 유튜브 상위 1위, URL이면 해당 URL 정보를 가져온다."""
-    import yt_dlp
-    is_url = query.startswith(("http://", "https://"))
-    target = query if is_url else f"ytsearch1:{query}"
-    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-        info = ydl.extract_info(target, download=False)
-    if "entries" in info:
-        entries = [e for e in info["entries"] if e]
-        if not entries:
-            return None
-        info = entries[0]
-    return info
- 
+    """검색어면 유튜브 상위 1위, URL이면 해당 URL 정보를 Piped로 가져온다."""
+    video_id = extract_video_id(query)
+    if not video_id:
+        video_id = piped_search_video_id(query)
+    if not video_id:
+        return None
+    return piped_get_track_info(video_id)
+
 def build_audio_source(info: dict) -> discord.FFmpegOpusAudio:
-    """yt-dlp 결과에서 스트림 URL과 헤더를 뽑아 FFmpeg 소스를 만든다."""
+    """Piped 결과에서 스트림 URL과 헤더를 뽑아 FFmpeg 소스를 만든다."""
     stream_url = info["url"]
     headers = info.get("http_headers") or {}
     header_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
@@ -473,7 +519,7 @@ def build_audio_source(info: dict) -> discord.FFmpegOpusAudio:
         before_options=before_options,
         options="-vn",
     )
- 
+
 @bot.tree.command(name="음악재생", description="노래 제목/가수명 또는 URL로 음악을 재생합니다.")
 @app_commands.describe(검색어="노래 제목, 가수명 또는 URL")
 async def play(interaction: discord.Interaction, 검색어: str):
@@ -498,9 +544,9 @@ async def play(interaction: discord.Interaction, 검색어: str):
         if not info:
             await interaction.followup.send(f"🔍 검색 결과가 없습니다: **{검색어}**")
             return
- 
+
         title = info.get("title", "알 수 없는 곡")
- 
+
         if vc.is_playing() or vc.is_paused():
             get_queue(interaction.guild.id).append(info)
             await interaction.followup.send(f"🎵 대기열 추가: **{title}**")
@@ -511,7 +557,7 @@ async def play(interaction: discord.Interaction, 검색어: str):
             await interaction.followup.send(f"▶️ 재생: **{title}**")
     except Exception as e:
         await interaction.followup.send(f"음악 재생 실패: `{e}`")
- 
+
 async def play_next(guild_id):
     queue = get_queue(guild_id)
     guild = bot.get_guild(guild_id)
@@ -524,7 +570,7 @@ async def play_next(guild_id):
         vc.play(source, after=lambda e: bot.loop.create_task(play_next(guild_id)))
     except Exception:
         await play_next(guild_id)
- 
+
 @bot.event
 async def on_voice_state_update(member, before, after):
     if member.bot:
@@ -542,7 +588,7 @@ async def on_voice_state_update(member, before, after):
     get_queue(guild_id).clear()
     music_starters.pop(guild_id, None)
     await vc.disconnect()
- 
+
 @bot.tree.command(name="음악일시정지", description="음악을 일시정지합니다.")
 async def pause(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
@@ -551,7 +597,7 @@ async def pause(interaction: discord.Interaction):
         await interaction.response.send_message("⏸️ 일시정지")
     else:
         await interaction.response.send_message("재생 중인 음악이 없습니다.", ephemeral=True)
- 
+
 @bot.tree.command(name="음악재개", description="일시정지한 음악을 재개합니다.")
 async def resume(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
@@ -560,7 +606,7 @@ async def resume(interaction: discord.Interaction):
         await interaction.response.send_message("▶️ 재개")
     else:
         await interaction.response.send_message("일시정지된 음악이 없습니다.", ephemeral=True)
- 
+
 @bot.tree.command(name="음악스킵", description="현재 음악을 건너뜁니다.")
 async def skip(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
@@ -569,7 +615,7 @@ async def skip(interaction: discord.Interaction):
         await interaction.response.send_message("⏭️ 스킵")
     else:
         await interaction.response.send_message("재생 중인 음악이 없습니다.", ephemeral=True)
- 
+
 @bot.tree.command(name="음악정지", description="음악을 멈추고 음성 채널에서 나갑니다.")
 async def stop_music(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
@@ -580,7 +626,7 @@ async def stop_music(interaction: discord.Interaction):
         await interaction.response.send_message("⏹️ 음악을 정지하고 나갔습니다.")
     else:
         await interaction.response.send_message("음성 채널에 연결되어 있지 않습니다.", ephemeral=True)
- 
+
 @bot.tree.command(name="대기열", description="음악 대기열을 확인합니다.")
 async def queue_cmd(interaction: discord.Interaction):
     queue = get_queue(interaction.guild.id)
@@ -591,9 +637,8 @@ async def queue_cmd(interaction: discord.Interaction):
         f"{i}. {info.get('title', '알 수 없는 곡')}" for i, info in enumerate(queue[:10], 1)
     )
     await interaction.response.send_message("🎵 **대기열**\n" + text)
- 
+
 if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("DISCORD_TOKEN 환경변수가 없습니다.")
     bot.run(TOKEN)
- 
