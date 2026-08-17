@@ -497,14 +497,64 @@ def piped_get_track_info(video_id: str):
             continue
     return None
 
+
+def ytdlp_get_track_info(query_or_video_id: str):
+    """Piped가 전부 실패했을 때 마지막으로 yt-dlp 직접 추출을 시도한다."""
+    try:
+        import yt_dlp
+    except ImportError:
+        print("[음악스트림-yt_dlp] yt_dlp 미설치, 건너뜀")
+        return None
+
+    target = query_or_video_id
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", query_or_video_id):
+        target = f"https://www.youtube.com/watch?v={query_or_video_id}"
+    elif not target.startswith(("http://", "https://")):
+        target = f"ytsearch1:{target}"
+
+    opts = {
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        "geo_bypass": True,
+        "socket_timeout": 10,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(target, download=False)
+        if "entries" in info:
+            entries = [e for e in info["entries"] if e]
+            if not entries:
+                return None
+            info = entries[0]
+        return {
+            "title": info.get("title", "알 수 없는 곡"),
+            "url": info["url"],
+            "http_headers": info.get("http_headers") or {},
+        }
+    except Exception as e:
+        print(f"[음악스트림-yt_dlp] 실패: {repr(e)}")
+        return None
+
+
 def search_track(query: str) -> dict:
-    """검색어면 유튜브 상위 1위, URL이면 해당 URL 정보를 Piped로 가져온다."""
+    """검색어면 유튜브 상위 1위, URL이면 해당 URL 정보를 가져온다.
+    1순위: Piped, 2순위(전부 실패 시): yt-dlp 직접 추출."""
     video_id = extract_video_id(query)
     if not video_id:
         video_id = piped_search_video_id(query)
-    if not video_id:
-        return None
-    return piped_get_track_info(video_id)
+
+    info = None
+    if video_id:
+        info = piped_get_track_info(video_id)
+
+    if not info:
+        print("[음악] Piped 전체 실패, yt-dlp로 최종 시도")
+        info = ytdlp_get_track_info(video_id or query)
+
+    return info
 
 def build_audio_source(info: dict) -> discord.FFmpegOpusAudio:
     """Piped 결과에서 스트림 URL과 헤더를 뽑아 FFmpeg 소스를 만든다."""
