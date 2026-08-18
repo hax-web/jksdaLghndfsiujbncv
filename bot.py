@@ -527,7 +527,7 @@ def ytdlp_get_track_info(query_or_video_id: str):
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         "geo_bypass": True,
         "socket_timeout": 10,
     }
