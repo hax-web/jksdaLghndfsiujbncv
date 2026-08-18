@@ -44,6 +44,16 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
+# ---------------- 유튜브 쿠키 (봇 차단 우회용) ----------------
+COOKIES_FILE = "cookies.txt"
+_cookies_env = os.getenv("YOUTUBE_COOKIES")
+if _cookies_env:
+    with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+        f.write(_cookies_env)
+    print("[진단] YOUTUBE_COOKIES 환경변수 감지 → cookies.txt 저장 완료")
+else:
+    print("[진단] YOUTUBE_COOKIES 환경변수 없음 (쿠키 미사용)")
+
 db = sqlite3.connect(DB_PATH)
 db.execute("""CREATE TABLE IF NOT EXISTS levels (
     guild_id INTEGER,
@@ -521,6 +531,8 @@ def ytdlp_get_track_info(query_or_video_id: str):
         "geo_bypass": True,
         "socket_timeout": 10,
     }
+    if os.path.exists(COOKIES_FILE):
+        opts["cookiefile"] = COOKIES_FILE
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(target, download=False)
