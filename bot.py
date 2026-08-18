@@ -523,16 +523,17 @@ def ytdlp_get_track_info(query_or_video_id: str):
         target = f"ytsearch1:{target}"
 
     opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio/best/bestaudio*",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         "geo_bypass": True,
         "socket_timeout": 10,
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
+    # 여러 클라이언트를 한 번에 시도해서 포맷을 못 찾는 문제를 줄임
+    opts["extractor_args"] = {"youtube": {"player_client": ["web", "android", "ios", "tv"]}}
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(target, download=False)
@@ -541,9 +542,15 @@ def ytdlp_get_track_info(query_or_video_id: str):
             if not entries:
                 return None
             info = entries[0]
+        stream_url = info.get("url")
+        if not stream_url and info.get("requested_formats"):
+            stream_url = info["requested_formats"][0].get("url")
+        if not stream_url:
+            print("[음악스트림-yt_dlp] 실패: 사용 가능한 스트림 URL 없음")
+            return None
         return {
             "title": info.get("title", "알 수 없는 곡"),
-            "url": info["url"],
+            "url": stream_url,
             "http_headers": info.get("http_headers") or {},
         }
     except Exception as e:
