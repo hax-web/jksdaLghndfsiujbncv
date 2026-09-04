@@ -1,70 +1,37 @@
-# Discord 종합 봇
+# 디스코드 통합 봇
 
-GitHub → Railway 배포를 기준으로 만든 Discord 종합 봇입니다.
+## 폴더 구조
+```
+discord_bot/
+├── main.py              # 봇 실행 파일
+├── requirements.txt
+└── cogs/
+    ├── news.py           # ✈️ 항공 뉴스 (/자동, /자동해제, /비행기뉴스, /항공검색)
+    ├── ai_chat.py         # 🤖 AI 질문 (/질문)
+    ├── leveling.py        # 📈 레벨링 (/레벨, /랭킹)
+    ├── tickets.py          # 🎫 티켓 (/티켓생성, /티켓닫기)
+    └── help.py            # 📖 도움말 (/도움말)
+```
 
-## 포함 기능
-- 미니게임: 홀짝, 가위바위보, 주사위, 숫자 맞히기
-- 관리: 청소, 추방, 차단, 공지
-- 레벨 시스템
-- 티켓 시스템
-- 정해진 시간 자동 채팅
-- 봇 설정
-- 음악 재생 / 일시정지 / 재개 / 스킵 / 정지 / 대기열
+## 설치
+```
+pip install -r requirements.txt
+```
 
-## 1. Discord 봇 만들기
-Discord Developer Portal에서 봇을 만들고 토큰을 발급합니다.
+## Railway 환경변수
+| 변수명 | 설명 |
+|---|---|
+| `DISCORD_TOKEN` | 디스코드 봇 토큰 (필수) |
+| `GROQ_API_KEY` | AI 질문 기능용 Groq API 키 (무료, console.groq.com 에서 발급, 신용카드 불필요) (없으면 `/질문` 명령어만 비활성화) |
 
-Bot 설정에서 다음 Intent를 켜는 것을 권장합니다.
-- Message Content Intent
-- Server Members Intent
+## 실행
+```
+python main.py
+```
 
-## 2. GitHub
-이 프로젝트 전체를 GitHub 저장소에 업로드합니다.
-
-## 3. Railway
-Railway에서 GitHub 저장소를 연결합니다.
-
-Variables에 다음을 추가합니다.
-
-DISCORD_TOKEN=여기에_봇_토큰
-
-토큰은 GitHub에 절대 올리지 마세요.
-
-## 4. 음악 기능
-음악 기능은 yt-dlp와 FFmpeg를 사용합니다.
-Railway 환경에서 FFmpeg가 필요합니다. 배포 환경에서 FFmpeg가 없다면 Railway/Nixpacks 설정으로 FFmpeg를 추가하세요.
-
-## 5. 시작
-Railway가 requirements.txt를 기준으로 패키지를 설치하고 bot.py를 실행하도록 설정하면 됩니다.
-
-권장 Start Command:
-python bot.py
-
-## 주요 명령어
-/홀짝
-/가위바위보
-/주사위
-/숫자맞히기
-
-/청소
-/추방
-/차단
-/공지
-
-/레벨
-/랭킹
-/레벨채널
-
-/티켓설정
-/티켓카테고리
-
-/반복채팅추가
-/반복채팅목록
-/반복채팅삭제
-
-/음악재생
-/음악일시정지
-/음악재개
-/음악스킵
-/음악정지
-/대기열
+## 참고
+- 뉴스 자동알림, 레벨 데이터, 뉴스 중복 방지 기록은 `data/` 폴더에 json 파일로 저장됩니다.
+  Railway에 배포할 경우 재배포 시 파일이 초기화될 수 있으니, 데이터를 계속 유지하려면 Railway Volume을 연결하는 걸 추천해요.
+- `/도움말`을 치면 코그(카테고리)별로 명령어가 묶여서 나옵니다. 나중에 기능(코그)을 추가하면 자동으로 도움말에도 포함됩니다.
+- 봇 초대 시 필요한 권한: 채널 관리(티켓용), 메시지 보내기/읽기, 임베드 링크, 애플리케이션 명령어.
+- Discord 개발자 포털에서 **Message Content Intent**를 꼭 켜주세요 (레벨링 기능에 필요합니다).
