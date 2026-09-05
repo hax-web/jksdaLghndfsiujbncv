@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import feedparser
 
-CHECK_INTERVAL_MINUTES = 30
+CHECK_INTERVAL_MINUTES = 60
 SEEN_FILE = "data/seen_news.json"
 CONFIG_FILE = "data/news_config.json"
 RSS_URL = "https://news.google.com/rss/search?q=비행기+OR+항공기&hl=ko&gl=KR&ceid=KR:ko"
@@ -48,6 +48,12 @@ def fetch_latest_news(limit=5):
     return feed.entries[:limit]
 
 
+def _entry_key(entry):
+    # 구글 뉴스 링크는 매번 다른 추적 코드가 붙어 바뀔 수 있어서,
+    # 링크 대신 기사 고유 id(guid)로 비교해 중복 전송을 막는다.
+    return entry.get("id") or entry.link
+
+
 def search_news(keyword, limit=5):
     url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR&ceid=KR:ko"
     feed = feedparser.parse(url)
@@ -74,8 +80,8 @@ class News(commands.Cog):
             return
 
         seen = load_seen()
-        entries = fetch_latest_news(limit=10)
-        new_entries = [e for e in entries if e.link not in seen]
+        entries = fetch_latest_news(limit=50)  # 넉넉하게 가져와서 누락 방지
+        new_entries = [e for e in entries if _entry_key(e) not in seen]
 
         for entry in reversed(new_entries):
             embed = discord.Embed(
@@ -86,7 +92,7 @@ class News(commands.Cog):
             )
             embed.set_footer(text="✈️ 항공 뉴스 알림")
             await channel.send(embed=embed)
-            seen.add(entry.link)
+            seen.add(_entry_key(entry))
 
         if new_entries:
             save_seen(seen)
